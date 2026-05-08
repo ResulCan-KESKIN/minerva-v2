@@ -7,14 +7,16 @@ import psycopg2
 import os
 
 
+def _clean(v): return v.replace(chr(0xFEFF), "").strip()
+
 @st.cache_resource
 def get_ext_conn():
     return psycopg2.connect(
-        host=os.environ["EXT_DB_HOST"],
-        port=int(os.environ["EXT_DB_PORT"]),
-        database=os.environ["EXT_DB_NAME"],
-        user=os.environ["EXT_DB_USER"],
-        password=os.environ["EXT_DB_PASSWORD"],
+        host=_clean(os.environ["EXT_DB_HOST"]),
+        port=int(_clean(os.environ["EXT_DB_PORT"])),
+        database=_clean(os.environ["EXT_DB_NAME"]),
+        user=_clean(os.environ["EXT_DB_USER"]),
+        password=_clean(os.environ["EXT_DB_PASSWORD"]),
     )
 
 

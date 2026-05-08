@@ -12,12 +12,14 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+def _clean(v): return v.replace(chr(0xFEFF), "").strip()
+
 EXT_CONFIG = {
-    "host": os.environ["EXT_DB_HOST"],
-    "port": int(os.environ["EXT_DB_PORT"]),
-    "database": os.environ["EXT_DB_NAME"],
-    "user": os.environ["EXT_DB_USER"],
-    "password": os.environ["EXT_DB_PASSWORD"],
+    "host": _clean(os.environ["EXT_DB_HOST"]),
+    "port": int(_clean(os.environ["EXT_DB_PORT"])),
+    "database": _clean(os.environ["EXT_DB_NAME"]),
+    "user": _clean(os.environ["EXT_DB_USER"]),
+    "password": _clean(os.environ["EXT_DB_PASSWORD"]),
 }
 
 # Kolon adı, anomali tipi, pencere boyutu
