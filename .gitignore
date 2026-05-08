@@ -1,0 +1,7 @@
+*.key
+*.pem
+*.pub
+.env
+minerva_yedek.sql
+__pycache__/
+*.pyc
