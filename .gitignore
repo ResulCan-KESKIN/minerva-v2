@@ -1,0 +1,16 @@
+*.key
+*.pem
+*.pub
+.env
+.env.local
+minerva_yedek.sql
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.streamlit/secrets.toml
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
