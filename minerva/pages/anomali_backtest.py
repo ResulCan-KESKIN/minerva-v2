@@ -2,22 +2,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import psycopg2
-import os
 from datetime import date, timedelta
-
-
-def _clean(v): return v.replace(chr(0xFEFF), "").strip()
-
-@st.cache_resource
-def get_ext_conn():
-    return psycopg2.connect(
-        host=_clean(os.environ["EXT_DB_HOST"]),
-        port=int(_clean(os.environ["EXT_DB_PORT"])),
-        database=_clean(os.environ["EXT_DB_NAME"]),
-        user=_clean(os.environ["EXT_DB_USER"]),
-        password=_clean(os.environ["EXT_DB_PASSWORD"]),
-    )
+from db import get_conn
 
 
 SERILER = [
@@ -83,7 +69,7 @@ def goster():
     _sec_header(1, "Tarama Parametreleri",
                 "· kayan ECDF eşiği · tüm seriler")
 
-    ext_conn = get_ext_conn()
+    ext_conn = get_conn()
 
     # ── Tarih aralığı ──
     col1, col2, col3 = st.columns([2, 2, 4])

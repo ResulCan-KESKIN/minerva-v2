@@ -13,7 +13,9 @@ def get_conn():
         _conn = _yeni_baglanti()
     else:
         try:
-            _conn.cursor().execute("SELECT 1")
+            cur = _conn.cursor()
+            cur.execute("SELECT 1")
+            cur.close()
         except Exception:
             _conn = _yeni_baglanti()
     return _conn

@@ -1,22 +1,30 @@
 """
-İş Yatırım'dan hisse başına dolaşımdaki lot (ödenmiş sermaye / nominal değer) çeker
-ve stocks.dolasim_lot sütununu günceller.
+BIST hisselerinin dolaşımdaki lot miktarını çeker ve stocks.dolasim_lot günceller.
 
-Çalıştırma: python isyatirim_fetch.py
+Yöntem (öncelik sırasıyla):
+  1. Yahoo Finance fast_info / info → sharesOutstanding (BIST için 1 lot = 1 TL nominal)
+  2. İş Yatırım şirket kartı HTML → JSON embed paidCapital parse
+
+Çalıştırma:
+  python isyatirim_fetch.py            # sadece NULL/0 olanları doldur
+  python isyatirim_fetch.py --tum      # tüm hisseleri yeniden çek
+  python isyatirim_fetch.py --test THYAO GARAN   # test modu (DB'ye yazmaz)
 """
 
 import re
 import time
 import logging
+import argparse
 import requests
 import pandas as pd
 from db import get_conn
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 log = logging.getLogger(__name__)
 
-# İş Yatırım temel veri endpoint'i
-ISYATIRIM_URL = "https://www.isyatirim.com.tr/tr-tr/analiz/hisse/Sayfalar/sirket-karti.aspx"
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -26,99 +34,181 @@ HEADERS = {
     "Accept-Language": "tr-TR,tr;q=0.9",
 }
 
-# Fallback: hisse.io JSON API (BIST için public)
-HISSEIO_URL = "https://financials.hisseio.com/api/v1/stock/{symbol}/fundamentals"
+# İş Yatırım şirket kartı (HTML embed parse)
+_IY_CARD = (
+    "https://www.isyatirim.com.tr/tr-tr/analiz/hisse/Sayfalar/"
+    "sirket-karti.aspx?hisse={symbol}"
+)
 
+# JSON içinde ödenmiş sermaye için denenen anahtar desenleri
+_IY_PATTERNS = [
+    r'"paidCapital"\s*:\s*([\d.]+)',
+    r'"odenmisSermaye"\s*:\s*([\d.]+)',
+    r'"PaidCapital"\s*:\s*([\d.]+)',
+    r'"PAID_CAPITAL"\s*:\s*([\d.]+)',
+    r'"odenmis_sermaye"\s*:\s*([\d.]+)',
+    # HTML tablo satırı formatı
+    r'[Öö]denmi[sş]\s+[Ss]ermaye[^<]*<[^>]+>\s*([\d.,]+)',
+]
+
+
+# ───────────────────────────────────────────
+# KAYNAK 1 — Yahoo Finance
+# ───────────────────────────────────────────
+
+def _yfinance_lot(symbol: str) -> float | None:
+    try:
+        import yfinance as yf
+        t = yf.Ticker(f"{symbol}.IS")
+
+        # fast_info (daha hızlı, yfinance ≥ 0.2)
+        try:
+            fi = t.fast_info
+            # fast_info bir nesne; attribute erişimi
+            val = getattr(fi, "shares", None)
+            if val and float(val) > 0:
+                log.debug(f"  {symbol}: fast_info.shares={val:.0f}")
+                return float(val)
+        except Exception:
+            pass
+
+        # info (yavaş ama kapsamlı)
+        info = t.info
+        for key in ("sharesOutstanding", "impliedSharesOutstanding", "floatShares"):
+            v = info.get(key)
+            if v and float(v) > 0:
+                log.debug(f"  {symbol}: info[{key}]={v:.0f}")
+                return float(v)
+
+    except Exception as e:
+        log.debug(f"  {symbol} yfinance hata: {e}")
+    return None
+
+
+# ───────────────────────────────────────────
+# KAYNAK 2 — İş Yatırım HTML embed
+# ───────────────────────────────────────────
 
 def _isyatirim_lot(symbol: str) -> float | None:
-    """İş Yatırım'dan dolaşım lotunu çekmeye çalış."""
     try:
-        params = {"hisse": symbol}
-        r = requests.get(ISYATIRIM_URL, params=params, headers=HEADERS, timeout=10)
-        r.raise_for_status()
-
-        # "Dolaşımdaki Hisse" veya "Ödenmiş Sermaye" satırını ara
-        # İş Yatırım sayfası JS-render olduğundan JSON embed'e bak
-        text = r.text
-
-        # Embedded JSON pattern: "paidCapital":1234567890
-        match = re.search(r'"paidCapital"\s*:\s*([\d.]+)', text)
-        if match:
-            # Ödenmiş sermaye TL cinsinden, nominal değer 1 TL → lot sayısı
-            return float(match.group(1))
-
-        # Alternatif pattern
-        match = re.search(r'Ödenmiş Sermaye.*?([\d.,]+)\s*(?:TL|Bin TL|Milyon TL)', text)
-        if match:
-            val_str = match.group(1).replace(".", "").replace(",", ".")
-            val = float(val_str)
-            # "Bin TL" ise 1000 çarp, "Milyon TL" ise 1_000_000 çarp
-            if "Milyon" in match.group(0):
-                val *= 1_000_000
-            elif "Bin" in match.group(0):
-                val *= 1_000
-            return val
-
-    except Exception as e:
-        log.debug(f"{symbol} isyatirim fetch hata: {e}")
-    return None
-
-
-def _hisseio_lot(symbol: str) -> float | None:
-    """Fallback: hisse.io fundamentals."""
-    try:
-        url = HISSEIO_URL.format(symbol=symbol)
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        url = _IY_CARD.format(symbol=symbol)
+        r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             return None
-        data = r.json()
-        # Alan adı değişebilir — yaygın isimler
-        for key in ("paidCapital", "paid_capital", "shares_outstanding", "dolasimLot"):
-            if key in data:
-                return float(data[key])
+        text = r.text
+
+        for pattern in _IY_PATTERNS:
+            m = re.search(pattern, text, re.IGNORECASE)
+            if m:
+                raw = m.group(1).strip().replace(".", "").replace(",", ".")
+                try:
+                    val = float(raw)
+                    if val > 0:
+                        log.debug(f"  {symbol}: isyatirim embed={val:.0f}")
+                        return val
+                except ValueError:
+                    continue
     except Exception as e:
-        log.debug(f"{symbol} hisseio fetch hata: {e}")
+        log.debug(f"  {symbol} isyatirim hata: {e}")
     return None
 
 
-def lot_guncelle(symbol: str) -> float | None:
-    lot = _isyatirim_lot(symbol)
+# ───────────────────────────────────────────
+# BİRLEŞİK ÇEKME
+# ───────────────────────────────────────────
+
+def lot_cek(symbol: str) -> float | None:
+    lot = _yfinance_lot(symbol)
     if lot is None:
-        lot = _hisseio_lot(symbol)
+        lot = _isyatirim_lot(symbol)
     return lot
 
 
-def tumunu_guncelle():
+# ───────────────────────────────────────────
+# DB GÜNCELLEME
+# ───────────────────────────────────────────
+
+def tumunu_guncelle(sadece_bos: bool = True, kuru_calistir: bool = False):
+    """
+    sadece_bos=True  → dolasim_lot NULL veya 0 olan hisseleri güncelle
+    sadece_bos=False → tüm aktif hisseleri yeniden çek
+    kuru_calistir    → DB'ye yazma, sadece logla
+    """
     conn = get_conn()
-    cur = conn.cursor()
+
+    where = "WHERE is_active = true"
+    if sadece_bos:
+        where += " AND (dolasim_lot IS NULL OR dolasim_lot = 0)"
 
     hisseler = pd.read_sql(
-        "SELECT id, symbol FROM stocks WHERE is_active = true ORDER BY symbol", conn
+        f"SELECT id, symbol FROM stocks {where} ORDER BY symbol", conn
     )
-    log.info(f"{len(hisseler)} hisse güncellenecek")
+    log.info(f"{len(hisseler)} hisse taranacak (sadece_bos={sadece_bos})")
 
+    cur = conn.cursor()
     guncellenen = 0
-    hata = 0
-    for _, row in hisseler.iterrows():
-        symbol = row["symbol"]
+    basarisiz = []
+
+    for i, (_, row) in enumerate(hisseler.iterrows(), 1):
+        symbol   = row["symbol"]
         stock_id = row["id"]
-        lot = lot_guncelle(symbol)
-        if lot is not None and lot > 0:
-            cur.execute(
-                "UPDATE stocks SET dolasim_lot = %s WHERE id = %s",
-                (lot, stock_id),
-            )
+
+        lot = lot_cek(symbol)
+        prefix = f"[{i}/{len(hisseler)}] {symbol}"
+
+        if lot and lot > 0:
+            if not kuru_calistir:
+                cur.execute(
+                    "UPDATE stocks SET dolasim_lot = %s WHERE id = %s",
+                    (lot, stock_id),
+                )
+            log.info(f"{prefix}: {lot:>18,.0f} lot")
             guncellenen += 1
-            log.info(f"{symbol}: {lot:,.0f} lot")
         else:
-            hata += 1
-            log.warning(f"{symbol}: lot verisi alınamadı")
-        time.sleep(0.3)  # rate-limit
+            log.warning(f"{prefix}: VERİ ALINAMADI")
+            basarisiz.append(symbol)
 
-    conn.commit()
+        if i % 20 == 0 and not kuru_calistir:
+            conn.commit()  # ara commit
+        time.sleep(0.5)   # rate-limit
+
+    if not kuru_calistir:
+        conn.commit()
     cur.close()
-    log.info(f"Tamamlandı: {guncellenen} güncellendi, {hata} başarısız")
 
+    log.info("=" * 60)
+    log.info(f"Tamamlandı → {guncellenen} güncellendi, {len(basarisiz)} başarısız")
+    if basarisiz:
+        log.info(f"Başarısız: {', '.join(basarisiz)}")
+
+
+# ───────────────────────────────────────────
+# TEST MODU
+# ───────────────────────────────────────────
+
+def test_semboller(semboller: list[str]):
+    """Birkaç sembol için veriyi çek, DB'ye yazma."""
+    log.info("TEST MODU — DB'ye yazılmıyor")
+    for sym in semboller:
+        lot = lot_cek(sym)
+        if lot:
+            log.info(f"  {sym}: {lot:,.0f} lot")
+        else:
+            log.warning(f"  {sym}: veri alınamadı")
+
+
+# ───────────────────────────────────────────
+# MAIN
+# ───────────────────────────────────────────
 
 if __name__ == "__main__":
-    tumunu_guncelle()
+    ap = argparse.ArgumentParser(description="BIST dolaşım lot güncelleme")
+    ap.add_argument("--tum",  action="store_true", help="Tüm hisseleri yeniden çek")
+    ap.add_argument("--test", nargs="+", metavar="SEMBOL",
+                    help="Sadece bu sembolleri test et (DB'ye yazmaz)")
+    args = ap.parse_args()
+
+    if args.test:
+        test_semboller(args.test)
+    else:
+        tumunu_guncelle(sadece_bos=not args.tum)

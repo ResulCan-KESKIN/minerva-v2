@@ -1,0 +1,113 @@
+"""
+Streamlit cache_data katmanı — sayfalar arası ve rerun'lar arası
+veri sorgularını TTL ile cache'ler.
+"""
+
+from __future__ import annotations
+import streamlit as st
+import pandas as pd
+from db import get_conn
+import data_access
+
+
+_TTL = 300  # 5 dk
+
+
+@st.cache_data(ttl=_TTL)
+def fiyat_verisi(stock_id: int, gun: int = 500) -> pd.DataFrame:
+    return data_access.fiyat_verisi_cek(get_conn(), stock_id, gun)
+
+
+@st.cache_data(ttl=_TTL)
+def anomali_tarihleri(symbol: str) -> set:
+    return data_access.anomali_tarihleri_cek(get_conn(), symbol)
+
+
+@st.cache_data(ttl=_TTL)
+def sikisma_kayitlari(symbol: str) -> pd.DataFrame:
+    return data_access.sikisma_kayitlari_cek(get_conn(), symbol)
+
+
+@st.cache_data(ttl=_TTL)
+def stock_id_lookup(symbol: str) -> int | None:
+    df = pd.read_sql(
+        "SELECT id FROM stocks WHERE symbol = %s", get_conn(), params=(symbol,)
+    )
+    return int(df["id"].iloc[0]) if not df.empty else None
+
+
+@st.cache_data(ttl=_TTL)
+def anomali_kayitlari(symbol: str) -> pd.DataFrame:
+    return pd.read_sql("""
+        SELECT id, baslangic_zaman, anomali_tipi,
+               ROUND(skor::numeric,4) AS skor, durum, notlar
+        FROM anomali_kayitlari
+        WHERE hisse_kodu = %s
+        ORDER BY baslangic_zaman DESC
+    """, get_conn(), params=(symbol,))
+
+
+@st.cache_data(ttl=_TTL)
+def zscore_seri(stock_id: int, gun: int = 500) -> pd.DataFrame:
+    df = pd.read_sql("""
+        SELECT price_date AS tarih, z_score_60, z_score_120,
+               z_score_robust_60, z_score_robust_120
+        FROM volume_analysis
+        WHERE stock_id = %s
+        ORDER BY price_date DESC
+        LIMIT %s
+    """, get_conn(), params=(stock_id, gun))
+    return df.sort_values("tarih").reset_index(drop=True)
+
+
+@st.cache_data(ttl=_TTL)
+def zscore_son(stock_id: int, n: int = 10) -> pd.DataFrame:
+    return pd.read_sql("""
+        SELECT price_date, z_score_robust_60, z_score_robust_120
+        FROM volume_analysis
+        WHERE stock_id = %s
+        ORDER BY price_date DESC
+        LIMIT %s
+    """, get_conn(), params=(stock_id, n))
+
+
+@st.cache_data(ttl=_TTL)
+def liderlik_top15() -> pd.DataFrame:
+    return pd.read_sql("""
+        WITH RankedSqueezes AS (
+            SELECT
+                symbol, radar, efor_rasyosu, sok_sayisi, sok_hacim_yuzdesi,
+                pencere_uzunlugu, kutu_baslangic, kutu_bitis,
+                ((COALESCE(efor_rasyosu,0) * 2) + (COALESCE(sok_sayisi,0) * 3)
+                 + (COALESCE(sok_hacim_yuzdesi,0) / 10.0)) AS m_skor,
+                ROW_NUMBER() OVER(
+                    PARTITION BY symbol
+                    ORDER BY ((COALESCE(efor_rasyosu,0) * 2)
+                              + (COALESCE(sok_sayisi,0) * 3)
+                              + (COALESCE(sok_hacim_yuzdesi,0) / 10.0)) DESC
+                ) AS rn
+            FROM fiyat_sikismasi_kayitlari
+            WHERE kutu_bitis >= CURRENT_DATE - INTERVAL '14 days'
+        ),
+        RadarAgg AS (
+            SELECT symbol, string_agg(DISTINCT radar, '+') AS radars
+            FROM fiyat_sikismasi_kayitlari
+            WHERE kutu_bitis >= CURRENT_DATE - INTERVAL '14 days'
+            GROUP BY symbol
+        )
+        SELECT
+            r.symbol, ra.radars, r.efor_rasyosu, r.sok_sayisi,
+            r.sok_hacim_yuzdesi, r.pencere_uzunlugu,
+            r.kutu_baslangic, r.kutu_bitis, r.m_skor AS master_skor
+        FROM RankedSqueezes r
+        JOIN RadarAgg ra ON r.symbol = ra.symbol
+        WHERE r.rn = 1
+        ORDER BY r.m_skor DESC
+        LIMIT 15
+    """, get_conn())
+
+
+def anomali_mutasyon_sonrasi(symbol: str):
+    """Anomali UPDATE sonrası ilgili cache'leri temizle."""
+    anomali_kayitlari.clear()
+    anomali_tarihleri.clear()

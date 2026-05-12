@@ -1,6 +1,5 @@
 """
-Candlestick grafik + sıkışma kutusu overlay.
-Lightweight Charts rectangle plugin olmadığından kutuyu arka plan serisi ile simüle ederiz.
+Candlestick + FAZ A (anomali) + FAZ B (sıkışma kutuları) birleşik grafik.
 """
 
 import pandas as pd
@@ -15,6 +14,23 @@ RADAR_RENK = {
     "radar1": "#4d8ef0",
     "radar2": "#d4820a",
 }
+RADAR_RENK_DIM = {
+    "radar1": "#4d8ef022",
+    "radar2": "#d4820a22",
+}
+
+TIP_RENK = {
+    "anomali_z60":   "#4d8ef0",
+    "anomali_z120":  "#06b6d4",
+    "anomali_rz60":  "#d4820a",
+    "anomali_rz120": "#22c55e",
+    "anomali_t":     "#a07af0",
+}
+TIP_KISA = {
+    "anomali_z60": "Z60", "anomali_z120": "Z120",
+    "anomali_rz60": "RZ60", "anomali_rz120": "RZ120",
+    "anomali_t": "T",
+}
 
 
 def _hazirla(df: pd.DataFrame) -> pd.DataFrame:
@@ -27,43 +43,132 @@ def _hazirla(df: pd.DataFrame) -> pd.DataFrame:
 
 def grafik_kutu_goster(
     df: pd.DataFrame,
-    kutular: list[dict],   # [{"baslangic": date, "bitis": date, "radar": str, "zirve": float, "dip": float}]
+    kutular: list[dict],
     anomali_tarihleri: set | None = None,
+    anomaliler_df: pd.DataFrame | None = None,
     key: str = "grafik_kutu",
     yukseklik: int = 420,
+    secili_kutu_bas: str | None = None,
 ):
     """
-    df        : price_date, acilis, yuksek, dusuk, kapanis, hacim sütunları.
-    kutular   : Faz 1 kutu listesi (radar1 mavi, radar2 turuncu).
+    df            : price_date, acilis, yuksek, dusuk, kapanis, hacim sütunlu OHLCV.
+    kutular       : Sıkışma kutuları — {baslangic, bitis, radar, zirve, dip}.
+    anomali_tarihleri : Set; hacim barlarını vurgulamak için (geriye uyumluluk).
+    anomaliler_df : DataFrame; verilirse marker olarak tipli anomaliler basılır.
+                    Beklenen sütunlar: baslangic_zaman, anomali_tipi, skor.
+    secili_kutu_bas : Seçili kutunun baslangic tarihi (str). Seçiliyse kalın solid,
+                      diğerleri soluk dashed gösterilir.
     """
     df = _hazirla(df)
-    anomali_set = {str(t) for t in (anomali_tarihleri or set())}
+    has_selected = secili_kutu_bas is not None
 
-    # Candlestick serisi
+    # Anomali tarihleri set'i — DataFrame varsa oradan da topla
+    anomali_set = {str(t) for t in (anomali_tarihleri or set())}
+    if anomaliler_df is not None and not anomaliler_df.empty:
+        anom_dates = pd.to_datetime(anomaliler_df["baslangic_zaman"]).dt.date.astype(str)
+        anomali_set.update(anom_dates.tolist())
+
+    # ── Markers ──
+    markers = []
+
+    # FAZ A: Tipli anomali markerları (üst tarafta)
+    if anomaliler_df is not None and not anomaliler_df.empty:
+        anoms = anomaliler_df.copy()
+        anoms["tarih"] = pd.to_datetime(anoms["baslangic_zaman"]).dt.date.astype(str)
+        for _, row in anoms.iterrows():
+            tip = row.get("anomali_tipi", "")
+            skor = float(row["skor"]) if pd.notna(row.get("skor")) else 0.0
+            renk = TIP_RENK.get(tip, "#666680")
+            kisa = TIP_KISA.get(tip, "A")
+            markers.append({
+                "time": row["tarih"],
+                "position": "aboveBar",
+                "color": renk,
+                "shape": "arrowDown",
+                "text": f"{kisa}·{skor:.1f}",
+            })
+
+    # FAZ B: Sıkışma kutu markerları (alt tarafta)
+    for k in kutular:
+        bas = str(k["baslangic"])
+        bit = str(k["bitis"])
+        is_s = has_selected and bas == secili_kutu_bas
+        if has_selected and not is_s:
+            renk = RADAR_RENK_DIM.get(k.get("radar", "radar1"), "#33334422")
+        else:
+            renk = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
+        markers.append({
+            "time": bas, "position": "belowBar", "color": renk,
+            "shape": "arrowUp", "text": k.get("radar", "").upper(),
+        })
+        markers.append({
+            "time": bit, "position": "belowBar", "color": renk,
+            "shape": "circle", "text": "BOX",
+        })
+
+    # ── Seriler ──
     candle_data = df[["time", "acilis", "yuksek", "dusuk", "kapanis"]].rename(
         columns={"acilis": "open", "yuksek": "high", "dusuk": "low", "kapanis": "close"}
     ).to_dict("records")
 
-    # Hacim serisi
     volume_data = [
         {
             "time":  row["time"],
             "value": float(row["hacim"]),
-            "color": "#d4820a44" if row["time"] in anomali_set else "#1e1e3044",
+            "color": "#d4820a66" if row["time"] in anomali_set else "#1e1e3044",
         }
         for _, row in df.iterrows()
     ]
 
-    # Kutu markerları (bar renklemesiyle kutu sınırlarını vurgula)
-    kutu_markers = []
+    # Kutu zirve/dip seviye çizgileri
+    extra_series = []
     for k in kutular:
         bas = str(k["baslangic"])
         bit = str(k["bitis"])
-        renk = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
-        kutu_markers.append({"time": bas, "position": "belowBar", "color": renk,
-                              "shape": "arrowUp", "text": k.get("radar", "").upper()})
-        kutu_markers.append({"time": bit, "position": "aboveBar", "color": renk,
-                              "shape": "arrowDown", "text": f'{k.get("zirve", 0):.2f}'})
+        is_s = has_selected and bas == secili_kutu_bas
+
+        if has_selected and not is_s:
+            renk   = RADAR_RENK_DIM.get(k.get("radar", "radar1"), "#33334422")
+            lw, ls = 1, 2
+        elif is_s:
+            renk   = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
+            lw, ls = 2, 0
+        else:
+            renk   = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
+            lw, ls = 1, 2
+
+        zirve = float(k.get("zirve") or 0)
+        dip   = float(k.get("dip")   or 0)
+
+        if zirve > 0:
+            zirve_data = [
+                {"time": row["time"], "value": zirve}
+                for _, row in df.iterrows() if bas <= row["time"] <= bit
+            ]
+            if zirve_data:
+                extra_series.append({
+                    "type": "Line", "data": zirve_data,
+                    "options": {
+                        "color": renk, "lineWidth": lw, "lineStyle": ls,
+                        "priceScaleId": "right",
+                        "lastValueVisible": False, "priceLineVisible": False,
+                    },
+                })
+
+        if dip > 0:
+            dip_data = [
+                {"time": row["time"], "value": dip}
+                for _, row in df.iterrows() if bas <= row["time"] <= bit
+            ]
+            if dip_data:
+                extra_series.append({
+                    "type": "Line", "data": dip_data,
+                    "options": {
+                        "color": renk, "lineWidth": lw, "lineStyle": ls,
+                        "priceScaleId": "right",
+                        "lastValueVisible": False, "priceLineVisible": False,
+                    },
+                })
 
     chart_cfg = {
         "layout": {
@@ -85,31 +190,30 @@ def grafik_kutu_goster(
         "height": yukseklik,
     }
 
-    renderLightweightCharts([{
-        "chart": chart_cfg,
-        "series": [
-            {
-                "type": "Candlestick",
-                "data": candle_data,
-                "markers": kutu_markers,
-                "options": {
-                    "upColor":       "#22c55e",
-                    "downColor":     "#e84040",
-                    "borderUpColor": "#22c55e",
-                    "borderDownColor": "#e84040",
-                    "wickUpColor":   "#22c55e",
-                    "wickDownColor": "#e84040",
-                    "priceScaleId": "right",
-                },
+    series_list = [
+        {
+            "type": "Candlestick",
+            "data": candle_data,
+            "markers": markers,
+            "options": {
+                "upColor":       "#22c55e",
+                "downColor":     "#e84040",
+                "borderUpColor": "#22c55e",
+                "borderDownColor": "#e84040",
+                "wickUpColor":   "#22c55e",
+                "wickDownColor": "#e84040",
+                "priceScaleId":  "right",
             },
-            {
-                "type": "Histogram",
-                "data": volume_data,
-                "options": {
-                    "priceFormat":  {"type": "volume"},
-                    "priceScaleId": "vol",
-                    "scaleMargins": {"top": 0.82, "bottom": 0},
-                },
+        },
+        {
+            "type": "Histogram",
+            "data": volume_data,
+            "options": {
+                "priceFormat":  {"type": "volume"},
+                "priceScaleId": "vol",
+                "scaleMargins": {"top": 0.82, "bottom": 0},
             },
-        ],
-    }], key=key)
+        },
+    ] + extra_series
+
+    renderLightweightCharts([{"chart": chart_cfg, "series": series_list}], key=key)
