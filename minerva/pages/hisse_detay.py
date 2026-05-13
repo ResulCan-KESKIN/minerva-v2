@@ -173,6 +173,10 @@ def goster(hisseler: list):
                     "radar":     row["radar"],
                     "zirve":     row.get("cekirdek_zirve") or 0,
                     "dip":       row.get("cekirdek_dip")   or 0,
+                    "trend_m":          row.get("trend_m"),
+                    "trend_c":          row.get("trend_c"),
+                    "kanal_ust_offset": row.get("kanal_ust_offset"),
+                    "kanal_alt_offset": row.get("kanal_alt_offset"),
                 })
 
             anoms_filtered = anomaliler

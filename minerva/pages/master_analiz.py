@@ -104,6 +104,27 @@ def master_grafik_goster(df, kutular, anomaliler, key="master_grafik", yukseklik
             renk       = RADAR_RENK.get(k["radar"], "#4d8ef0")
             lw, ls     = 1, 2
 
+        # Eğimli kanal (radar1 v2.3)
+        trend_m = k.get("trend_m")
+        trend_c = k.get("trend_c")
+        ust_off = k.get("kanal_ust_offset")
+        alt_off = k.get("kanal_alt_offset")
+
+        if all(v is not None for v in (trend_m, trend_c, ust_off, alt_off)):
+            kutu_rows = [r for _, r in df.iterrows() if bas_s <= r["time"] <= bit_s]
+            if kutu_rows:
+                ust_data, alt_data = [], []
+                for t_idx, r in enumerate(kutu_rows):
+                    trend_val = float(trend_m) * t_idx + float(trend_c)
+                    ust_data.append({"time": r["time"], "value": trend_val + float(ust_off)})
+                    alt_data.append({"time": r["time"], "value": trend_val + float(alt_off)})
+                for data in (ust_data, alt_data):
+                    extra_series.append({"type": "Line", "data": data,
+                        "options": {"color": renk, "lineWidth": lw, "lineStyle": ls,
+                                    "priceScaleId": "right", "lastValueVisible": False, "priceLineVisible": False}})
+            continue
+
+        # Eski yatay (radar2)
         zirve_val = k.get("cekirdek_zirve") or 0
         dip_val   = k.get("cekirdek_dip")   or 0
 
@@ -210,9 +231,100 @@ def _liderlik_tablosu() -> pd.DataFrame:
     st.markdown('<div style="margin:20px 0 30px; border-bottom:1px solid #1a1a24"></div>', unsafe_allow_html=True)
     return df_lider
 
+
+YON_RENK = {"yukselen": "#22c55e", "dusen": "#e84040", "yatay": "#8888a8"}
+YON_KISA = {"yukselen": "↗ YUKS", "dusen": "↘ DUS", "yatay": "→ YATAY"}
+
+
+def _r1_kanallar_paneli():
+    df = cache.radar1_kanallar()
+    n = len(df)
+
+    st.markdown(
+        f'<div style="font-size:11px;color:#e0e0f0;letter-spacing:0.06em;margin:0 0 14px 0">'
+        f'<span style="color:#2e2e48;margin-right:8px">§ 0.5</span>'
+        f'RADAR 1 KANALLAR <span style="color:#2e2e48;font-size:10px;margin-left:8px">· {n} kayıt</span>'
+        f'</div>', unsafe_allow_html=True)
+
+    if df.empty:
+        st.info("v2.3 algoritmasının ürettiği radar1 kanalı yok.")
+        return
+
+    # Filtre çubuğu
+    f_col1, f_col2, f_col3 = st.columns([2, 2, 6])
+    with f_col1:
+        yon_sec = st.multiselect(
+            "yon", ["yukselen", "yatay", "dusen"],
+            default=[], label_visibility="collapsed",
+            placeholder="Yön filtre",
+            key="r1_yon_filtre",
+        )
+    with f_col2:
+        min_N = st.selectbox(
+            "min_N", [10, 30, 50, 60, 80, 100, 150],
+            index=0, label_visibility="collapsed",
+            format_func=lambda v: f"min {v}g",
+            key="r1_min_N",
+        )
+
+    df_f = df.copy()
+    if yon_sec:
+        df_f = df_f[df_f["kanal_yonu"].isin(yon_sec)]
+    df_f = df_f[df_f["pencere_uzunlugu"] >= min_N]
+
+    st.markdown(
+        f'<div style="font-size:10px;color:#2e2e48;margin:6px 0 8px 0">'
+        f'filtre sonucu: {len(df_f)} / {n}</div>', unsafe_allow_html=True)
+
+    if df_f.empty:
+        st.markdown('<div style="margin:0 0 30px; border-bottom:1px solid #1a1a24"></div>', unsafe_allow_html=True)
+        return
+
+    weights = [1, 1.2, 0.6, 1, 1.5, 0.7, 0.6]
+    h = st.columns(weights)
+    for c, t in zip(h, ["Hisse", "Yön", "N", "m_norm/gün", "Aralık", "Efor", "Şok"]):
+        c.markdown(
+            f'<div style="font-size:9px;color:#2e2e48;letter-spacing:0.1em;text-transform:uppercase;'
+            f'padding:6px 4px;border-bottom:1px solid #1a1a24">{t}</div>', unsafe_allow_html=True)
+
+    for _, row in df_f.iterrows():
+        secili = st.session_state.get("gb_secilen") == row["symbol"]
+        cols = st.columns(weights)
+        with cols[0]:
+            if st.button(row["symbol"], key=f"r1_btn_{row['symbol']}_{row['kutu_baslangic']}",
+                         use_container_width=True,
+                         type="primary" if secili else "secondary"):
+                st.session_state["gb_secilen"] = row["symbol"]
+                st.rerun()
+
+        yon = row["kanal_yonu"]
+        renk = YON_RENK.get(yon, "#8888a8")
+        cols[1].markdown(
+            f'<div style="padding:8px 4px;font-size:10px;color:{renk};letter-spacing:0.08em">{YON_KISA.get(yon, yon.upper())}</div>',
+            unsafe_allow_html=True)
+        cols[2].markdown(f'<div style="padding:8px 4px;font-size:11px;color:#e0e0f0">{int(row["pencere_uzunlugu"])}g</div>', unsafe_allow_html=True)
+        m_pct = row["m_norm"] * 100 if pd.notna(row["m_norm"]) else 0
+        cols[3].markdown(f'<div style="padding:8px 4px;font-size:11px;color:#8888a8">%{m_pct:+.3f}</div>', unsafe_allow_html=True)
+        bas = str(row["kutu_baslangic"])[5:]
+        bit = str(row["kutu_bitis"])[5:]
+        cols[4].markdown(f'<div style="padding:8px 4px;font-size:11px;color:#3a3a55">{bas} → {bit}</div>', unsafe_allow_html=True)
+        ef = row["efor_rasyosu"]
+        ef_s = f"{ef:.2f}x" if pd.notna(ef) else "—"
+        ef_renk = "#22c55e" if pd.notna(ef) and ef >= 2 else "#8888a8"
+        cols[5].markdown(f'<div style="padding:8px 4px;font-size:11px;color:{ef_renk}">{ef_s}</div>', unsafe_allow_html=True)
+        sk = row["sok_sayisi"]
+        sk_s = str(int(sk)) if pd.notna(sk) else "—"
+        cols[6].markdown(f'<div style="padding:8px 4px;font-size:11px;color:#d4820a">{sk_s}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div style="margin:20px 0 30px; border-bottom:1px solid #1a1a24"></div>', unsafe_allow_html=True)
+
+
 def goster():
     # 0. Liderlik Tablosu (tıklanabilir)
     df_lider = _liderlik_tablosu()
+
+    # 0.5 Radar1 v2.3 kanallar listesi
+    _r1_kanallar_paneli()
 
     # Seçili hisse: kullanıcı tıklamadıysa liderlik tablosunun ilk satırı
     symbol = st.session_state.get("gb_secilen")

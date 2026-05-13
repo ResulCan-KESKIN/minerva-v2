@@ -72,6 +72,22 @@ def zscore_son(stock_id: int, n: int = 10) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=_TTL)
+def radar1_kanallar() -> pd.DataFrame:
+    """v2.3 algoritmasının ürettiği tüm radar1 kanalları (kanal_yonu IS NOT NULL)."""
+    return pd.read_sql("""
+        SELECT symbol, kanal_yonu, pencere_uzunlugu,
+               m_norm::float        AS m_norm,
+               kutu_baslangic, kutu_bitis,
+               efor_rasyosu::float  AS efor_rasyosu,
+               sok_sayisi,
+               sok_hacim_yuzdesi::float AS sok_hacim_yuzdesi
+        FROM fiyat_sikismasi_kayitlari
+        WHERE radar = 'radar1' AND kanal_yonu IS NOT NULL
+        ORDER BY pencere_uzunlugu DESC, ABS(m_norm) DESC
+    """, get_conn())
+
+
+@st.cache_data(ttl=_TTL)
 def liderlik_top15() -> pd.DataFrame:
     return pd.read_sql("""
         WITH RankedSqueezes AS (

@@ -120,7 +120,7 @@ def grafik_kutu_goster(
         for _, row in df.iterrows()
     ]
 
-    # Kutu zirve/dip seviye çizgileri
+    # Kutu kanal çizgileri (eğimli ya da yatay)
     extra_series = []
     for k in kutular:
         bas = str(k["baslangic"])
@@ -137,6 +137,33 @@ def grafik_kutu_goster(
             renk   = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
             lw, ls = 1, 2
 
+        # Eğimli kanal mı? (radar1 v2.3)
+        trend_m    = k.get("trend_m")
+        trend_c    = k.get("trend_c")
+        ust_off    = k.get("kanal_ust_offset")
+        alt_off    = k.get("kanal_alt_offset")
+        kanal_var  = all(v is not None for v in (trend_m, trend_c, ust_off, alt_off))
+
+        if kanal_var:
+            kutu_rows = [row for _, row in df.iterrows() if bas <= row["time"] <= bit]
+            if kutu_rows:
+                ust_data, alt_data = [], []
+                for t_idx, row in enumerate(kutu_rows):
+                    trend_val = float(trend_m) * t_idx + float(trend_c)
+                    ust_data.append({"time": row["time"], "value": trend_val + float(ust_off)})
+                    alt_data.append({"time": row["time"], "value": trend_val + float(alt_off)})
+                for data in (ust_data, alt_data):
+                    extra_series.append({
+                        "type": "Line", "data": data,
+                        "options": {
+                            "color": renk, "lineWidth": lw, "lineStyle": ls,
+                            "priceScaleId": "right",
+                            "lastValueVisible": False, "priceLineVisible": False,
+                        },
+                    })
+            continue
+
+        # Geri uyum: düz yatay zirve/dip (radar2)
         zirve = float(k.get("zirve") or 0)
         dip   = float(k.get("dip")   or 0)
 

@@ -22,7 +22,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 MAX_WORKERS = 3
-FIYAT_GUN   = 250
+FIYAT_GUN   = 500   # v2.3: ampirik dağılım için 250g geçmiş + 60-200g test penceresi
 
 
 def _isle(row) -> tuple[str, int]:
