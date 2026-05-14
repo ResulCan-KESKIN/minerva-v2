@@ -14,6 +14,10 @@ RADAR_RENK = {
     "radar1": "#4d8ef0",
     "radar2": "#d4820a",
 }
+RADAR_RENK_DIM = {
+    "radar1": "#4d8ef022",
+    "radar2": "#d4820a22",
+}
 
 TIP_RENK = {
     "anomali_z60":   "#4d8ef0",
@@ -34,6 +38,8 @@ def _hazirla(df: pd.DataFrame) -> pd.DataFrame:
     df["price_date"] = pd.to_datetime(df["price_date"])
     df = df.sort_values("price_date")
     df["time"] = df["price_date"].dt.strftime("%Y-%m-%d")
+    df = df.dropna(subset=["acilis", "yuksek", "dusuk", "kapanis"])
+    df["hacim"] = df["hacim"].fillna(0)
     return df
 
 
@@ -44,6 +50,7 @@ def grafik_kutu_goster(
     anomaliler_df: pd.DataFrame | None = None,
     key: str = "grafik_kutu",
     yukseklik: int = 420,
+    secili_kutu_bas: str | None = None,
 ):
     """
     df            : price_date, acilis, yuksek, dusuk, kapanis, hacim sütunlu OHLCV.
@@ -51,8 +58,11 @@ def grafik_kutu_goster(
     anomali_tarihleri : Set; hacim barlarını vurgulamak için (geriye uyumluluk).
     anomaliler_df : DataFrame; verilirse marker olarak tipli anomaliler basılır.
                     Beklenen sütunlar: baslangic_zaman, anomali_tipi, skor.
+    secili_kutu_bas : Seçili kutunun baslangic tarihi (str). Seçiliyse kalın solid,
+                      diğerleri soluk dashed gösterilir.
     """
     df = _hazirla(df)
+    has_selected = secili_kutu_bas is not None
 
     # Anomali tarihleri set'i — DataFrame varsa oradan da topla
     anomali_set = {str(t) for t in (anomali_tarihleri or set())}
@@ -84,7 +94,11 @@ def grafik_kutu_goster(
     for k in kutular:
         bas = str(k["baslangic"])
         bit = str(k["bitis"])
-        renk = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
+        is_s = has_selected and bas == secili_kutu_bas
+        if has_selected and not is_s:
+            renk = RADAR_RENK_DIM.get(k.get("radar", "radar1"), "#33334422")
+        else:
+            renk = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
         markers.append({
             "time": bas, "position": "belowBar", "color": renk,
             "shape": "arrowUp", "text": k.get("radar", "").upper(),
@@ -108,13 +122,54 @@ def grafik_kutu_goster(
         for _, row in df.iterrows()
     ]
 
-    # Kutu zirve/dip seviye çizgileri
+    # Kutu kanal çizgileri (eğimli ya da yatay)
     extra_series = []
     for k in kutular:
-        renk = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
-        bas, bit = str(k["baslangic"]), str(k["bitis"])
-        zirve = float(k.get("zirve") or 0)
-        dip   = float(k.get("dip")   or 0)
+        bas = str(k["baslangic"])
+        bit = str(k["bitis"])
+        is_s = has_selected and bas == secili_kutu_bas
+
+        if has_selected and not is_s:
+            renk   = RADAR_RENK_DIM.get(k.get("radar", "radar1"), "#33334422")
+            lw, ls = 1, 2
+        elif is_s:
+            renk   = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
+            lw, ls = 2, 0
+        else:
+            renk   = RADAR_RENK.get(k.get("radar", "radar1"), "#4d8ef0")
+            lw, ls = 1, 2
+
+        # Eğimli kanal mı? (radar1 v2.3)
+        trend_m    = k.get("trend_m")
+        trend_c    = k.get("trend_c")
+        ust_off    = k.get("kanal_ust_offset")
+        alt_off    = k.get("kanal_alt_offset")
+        kanal_var  = all(pd.notna(v) for v in (trend_m, trend_c, ust_off, alt_off))
+
+        if kanal_var:
+            kutu_rows = [row for _, row in df.iterrows() if bas <= row["time"] <= bit]
+            if kutu_rows:
+                ust_data, alt_data = [], []
+                for t_idx, row in enumerate(kutu_rows):
+                    trend_val = float(trend_m) * t_idx + float(trend_c)
+                    ust_data.append({"time": row["time"], "value": trend_val + float(ust_off)})
+                    alt_data.append({"time": row["time"], "value": trend_val + float(alt_off)})
+                for data in (ust_data, alt_data):
+                    extra_series.append({
+                        "type": "Line", "data": data,
+                        "options": {
+                            "color": renk, "lineWidth": lw, "lineStyle": ls,
+                            "priceScaleId": "right",
+                            "lastValueVisible": False, "priceLineVisible": False,
+                        },
+                    })
+            continue
+
+        # Geri uyum: düz yatay zirve/dip (radar2)
+        zirve_raw = k.get("zirve")
+        dip_raw   = k.get("dip")
+        zirve = float(zirve_raw) if pd.notna(zirve_raw) else 0.0
+        dip   = float(dip_raw)   if pd.notna(dip_raw)   else 0.0
 
         if zirve > 0:
             zirve_data = [
@@ -125,7 +180,7 @@ def grafik_kutu_goster(
                 extra_series.append({
                     "type": "Line", "data": zirve_data,
                     "options": {
-                        "color": renk, "lineWidth": 1, "lineStyle": 2,
+                        "color": renk, "lineWidth": lw, "lineStyle": ls,
                         "priceScaleId": "right",
                         "lastValueVisible": False, "priceLineVisible": False,
                     },
@@ -140,7 +195,7 @@ def grafik_kutu_goster(
                 extra_series.append({
                     "type": "Line", "data": dip_data,
                     "options": {
-                        "color": renk, "lineWidth": 1, "lineStyle": 2,
+                        "color": renk, "lineWidth": lw, "lineStyle": ls,
                         "priceScaleId": "right",
                         "lastValueVisible": False, "priceLineVisible": False,
                     },

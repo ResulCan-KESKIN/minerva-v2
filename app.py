@@ -20,13 +20,18 @@ html, body, [class*="css"] {
     color: #c0c0d0;
 }
 .stApp { background-color: #0c0c13 !important; }
-.block-container { padding-top: 0 !important; max-width: 100% !important; }
+.block-container {
+    padding: 12px 20px 24px 20px !important;
+    max-width: 100% !important;
+}
 section[data-testid="stSidebar"] { display: none !important; }
 div[data-testid="stToolbar"]     { display: none !important; }
 header[data-testid="stHeader"]   { display: none !important; }
 footer { display: none !important; }
 
-div[data-testid="stRadio"] > label { display: none !important; }
+div[data-testid="stRadio"] > label,
+div[data-testid="stRadio"] [data-testid="stWidgetLabel"],
+div[data-testid="stRadio"] > div:first-child > p { display: none !important; }
 div[data-testid="stRadio"] > div {
     display: flex !important; flex-direction: row !important;
     gap: 0 !important; flex-wrap: nowrap !important;
@@ -136,7 +141,17 @@ div[data-testid="stInfo"], div[data-testid="stWarning"], div[data-testid="stErro
 ::-webkit-scrollbar-thumb { background: #1e1e30; border-radius: 1px; }
 ::-webkit-scrollbar-thumb:hover { background: #2e2e44; }
 
-div[data-testid="stVerticalBlock"] > div { padding-top: 0 !important; }
+div[data-testid="stVerticalBlock"] > div { padding-top: 0 !important; padding-bottom: 0 !important; }
+div[data-testid="stVerticalBlock"] { gap: 0 !important; }
+div[data-testid="stHorizontalBlock"] { gap: 12px !important; flex-wrap: nowrap !important; }
+div[data-testid="column"] { padding: 0 !important; min-width: 0 !important; overflow: visible !important; }
+div[data-testid="stVerticalBlockBorderWrapper"] { padding: 0 !important; }
+
+/* Scroll container'ın kendi border'ını gizle */
+div[data-testid="stVerticalBlockBorderWrapper"][style*="overflow"] {
+    border: none !important;
+    background: transparent !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -148,8 +163,6 @@ def _anomali_stats():
         SELECT
             (SELECT COUNT(*) FROM stocks WHERE is_active = true) AS hisse_sayisi,
             COUNT(*)                                              AS toplam,
-            COUNT(*) FILTER (WHERE durum = 'beklemede')          AS beklemede,
-            COUNT(*) FILTER (WHERE durum = 'onaylandi')          AS onaylandi,
             MAX(baslangic_zaman)                                  AS son_guncelleme
         FROM anomali_kayitlari
     """, conn).iloc[0]
@@ -172,12 +185,10 @@ try:
     sa = _anomali_stats()
     a_hisse   = int(sa["hisse_sayisi"])
     a_toplam  = int(sa["toplam"])
-    a_bekl    = int(sa["beklemede"])
-    a_onayli  = int(sa["onaylandi"])
     a_son     = sa["son_guncelleme"]
     a_son_str = a_son.strftime("%Y-%m-%d %H:%M") if a_son is not None else "—"
 except Exception:
-    a_hisse = a_toplam = a_bekl = a_onayli = 0
+    a_hisse = a_toplam = 0
     a_son_str = "—"
 
 # ── Header ──
@@ -218,8 +229,9 @@ with col_nav:
     )
 
 with col_hisse:
-    if sayfa == "Genel Bakis":
-        secilen = ""
+    if sayfa in ("Genel Bakis", "Hisse Detay"):
+        # Hisse Detay manages its own selector inside the page
+        secilen = st.session_state.get("hd_hisse", "")
     else:
         secilen = st.selectbox(
             "hisse", hisseler,
@@ -235,9 +247,7 @@ st.markdown(f"""
             display:flex;justify-content:space-between">
   <span>
     takip <span style="color:#4a4a68">{a_hisse}</span> hisse
-    &nbsp;·&nbsp; toplam <span style="color:#4a4a68">{a_toplam:,}</span>
-    &nbsp;·&nbsp; beklemede <span style="color:#d4820a">{a_bekl:,}</span>
-    &nbsp;·&nbsp; onaylı <span style="color:#4a4a68">{a_onayli}</span>
+    &nbsp;·&nbsp; toplam <span style="color:#4a4a68">{a_toplam:,}</span> anomali
   </span>
   <span style="color:#2e2e48">{ticker_html}</span>
 </div>
@@ -247,7 +257,7 @@ st.markdown(f"""
 if sayfa == "Genel Bakis":
     master_analiz.goster()
 elif sayfa == "Hisse Detay":
-    hisse_detay.goster(secilen)
+    hisse_detay.goster(hisseler)
 elif sayfa == "Backtest":
     anomali_backtest.goster()
 
@@ -257,7 +267,7 @@ st.markdown(f"""
             display:flex;justify-content:space-between;align-items:center">
   <span style="font-size:10px;color:#2a2a40;letter-spacing:0.06em">
     <span style="color:#22c55e">●</span>
-    &nbsp;db · synced &nbsp;·&nbsp; queue <span style="color:#2e2e48">{a_bekl:,}</span>
+    &nbsp;db · synced
   </span>
   <span style="font-size:10px;color:#2a2a40;letter-spacing:0.06em">Minerva</span>
 </div>

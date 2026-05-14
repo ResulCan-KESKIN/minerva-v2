@@ -63,7 +63,10 @@ def sikisma_kayitlari_cek(conn, symbol: str | None = None) -> pd.DataFrame:
         SELECT id, symbol, radar, kutu_baslangic, kutu_bitis,
                cekirdek_zirve, cekirdek_dip, pencere_uzunlugu,
                fiziki_limit, efor_rasyosu,
-               sok_sayisi, sok_hacim_yuzdesi, olusturma_zaman
+               sok_sayisi, sok_hacim_yuzdesi, olusturma_zaman,
+               m_norm, kanal_yonu,
+               trend_m, trend_c,
+               kanal_ust_offset, kanal_alt_offset
         FROM fiyat_sikismasi_kayitlari
         {where}
         ORDER BY kutu_bitis DESC, efor_rasyosu DESC NULLS LAST

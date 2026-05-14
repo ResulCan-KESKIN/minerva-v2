@@ -24,3 +24,11 @@ ALTER TABLE stocks ADD COLUMN IF NOT EXISTS dolasim_lot NUMERIC;
 
 CREATE INDEX IF NOT EXISTS idx_fsk_symbol ON fiyat_sikismasi_kayitlari (symbol);
 CREATE INDEX IF NOT EXISTS idx_fsk_kutu_bitis ON fiyat_sikismasi_kayitlari (kutu_bitis DESC);
+
+-- Radar1 v2.3 — kanal şekli (eğimli kanal desteği)
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS m_norm           NUMERIC;
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS kanal_yonu       TEXT;
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS trend_m          NUMERIC;
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS trend_c          NUMERIC;
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS kanal_ust_offset NUMERIC;
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS kanal_alt_offset NUMERIC;

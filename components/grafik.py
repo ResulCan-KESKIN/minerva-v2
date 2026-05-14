@@ -34,6 +34,8 @@ def _hazirla(df):
         hacim=("hacim", "sum"),
     ).reset_index()
     df["time"] = df["tarih"].astype(str)
+    df = df.dropna(subset=["kapanis"])
+    df["hacim"] = df["hacim"].fillna(0)
     return df
 
 

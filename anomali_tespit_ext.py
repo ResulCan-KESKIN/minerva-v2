@@ -9,8 +9,10 @@ from scipy import stats
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import warnings
+from dotenv import load_dotenv
 
 warnings.filterwarnings('ignore')
+load_dotenv()
 
 def _clean(v): return v.replace(chr(0xFEFF), "").strip()
 
@@ -206,7 +208,7 @@ def anomali_tara(stock_id: int, symbol: str) -> str:
             mod = "t-dağılımı"
 
         kayitlar = [
-            (symbol, tip, float(skor), tarih, "beklemede", kaynak)
+            (symbol, tip, float(skor), tarih, "onaylandi", kaynak)
             for tip, skor, tarih, kaynak in anomaliler
         ]
 

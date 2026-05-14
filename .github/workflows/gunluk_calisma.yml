@@ -28,7 +28,7 @@ jobs:
           EXT_DB_NAME: ${{ secrets.EXT_DB_NAME }}
           EXT_DB_USER: ${{ secrets.EXT_DB_USER }}
           EXT_DB_PASSWORD: ${{ secrets.EXT_DB_PASSWORD }}
-        run: python minerva/veri_guncelle.py
+        run: python veri_guncelle.py
 
       - name: Anomali tespiti (Z-Score hesaplama)
         env:
@@ -37,7 +37,7 @@ jobs:
           EXT_DB_NAME: ${{ secrets.EXT_DB_NAME }}
           EXT_DB_USER: ${{ secrets.EXT_DB_USER }}
           EXT_DB_PASSWORD: ${{ secrets.EXT_DB_PASSWORD }}
-        run: python minerva/anomali_tespit_ext.py
+        run: python anomali_tespit_ext.py
 
       - name: Fiyat sıkışması taraması (Radar1 + Radar2)
         env:
@@ -46,4 +46,4 @@ jobs:
           EXT_DB_NAME: ${{ secrets.EXT_DB_NAME }}
           EXT_DB_USER: ${{ secrets.EXT_DB_USER }}
           EXT_DB_PASSWORD: ${{ secrets.EXT_DB_PASSWORD }}
-        run: python minerva/tarama_calistir.py
+        run: python tarama_calistir.py

@@ -72,38 +72,66 @@ def zscore_son(stock_id: int, n: int = 10) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=_TTL)
-def liderlik_top15() -> pd.DataFrame:
+def radar1_kanallar() -> pd.DataFrame:
+    """v2.3 algoritmasının ürettiği tüm radar1 kanalları (kanal_yonu IS NOT NULL)."""
     return pd.read_sql("""
-        WITH RankedSqueezes AS (
+        SELECT symbol, kanal_yonu, pencere_uzunlugu,
+               m_norm::float        AS m_norm,
+               kutu_baslangic, kutu_bitis,
+               efor_rasyosu::float  AS efor_rasyosu,
+               sok_sayisi,
+               sok_hacim_yuzdesi::float AS sok_hacim_yuzdesi
+        FROM fiyat_sikismasi_kayitlari
+        WHERE radar = 'radar1' AND kanal_yonu IS NOT NULL
+        ORDER BY pencere_uzunlugu DESC, ABS(m_norm) DESC
+    """, get_conn())
+
+
+@st.cache_data(ttl=_TTL)
+def liderlik_liste(gun_siniri: int = 90) -> pd.DataFrame:
+    """Hisse başına en yüksek skoru seçer; fiziki_limit dahildir. gun_siniri=0 → tüm geçmiş."""
+    gun_where = (
+        f"WHERE kutu_bitis >= CURRENT_DATE - INTERVAL '{int(gun_siniri)} days'"
+        if gun_siniri > 0 else ""
+    )
+    return pd.read_sql(f"""
+        WITH filtered AS (
+            SELECT * FROM fiyat_sikismasi_kayitlari {gun_where}
+        ),
+        RankedSqueezes AS (
             SELECT
-                symbol, radar, efor_rasyosu, sok_sayisi, sok_hacim_yuzdesi,
-                pencere_uzunlugu, kutu_baslangic, kutu_bitis,
-                ((COALESCE(efor_rasyosu,0) * 2) + (COALESCE(sok_sayisi,0) * 3)
-                 + (COALESCE(sok_hacim_yuzdesi,0) / 10.0)) AS m_skor,
+                symbol, radar, kanal_yonu,
+                efor_rasyosu::float      AS efor_rasyosu,
+                sok_sayisi,
+                sok_hacim_yuzdesi::float AS sok_hacim_yuzdesi,
+                pencere_uzunlugu,
+                kutu_baslangic, kutu_bitis,
+                fiziki_limit::float      AS fiziki_limit,
+                ((COALESCE(efor_rasyosu,0) * 2)
+                 + (COALESCE(sok_sayisi,0) * 3)
+                 + (COALESCE(sok_hacim_yuzdesi,0) / 10.0)) AS master_skor,
                 ROW_NUMBER() OVER(
                     PARTITION BY symbol
                     ORDER BY ((COALESCE(efor_rasyosu,0) * 2)
                               + (COALESCE(sok_sayisi,0) * 3)
                               + (COALESCE(sok_hacim_yuzdesi,0) / 10.0)) DESC
                 ) AS rn
-            FROM fiyat_sikismasi_kayitlari
-            WHERE kutu_bitis >= CURRENT_DATE - INTERVAL '14 days'
+            FROM filtered
         ),
         RadarAgg AS (
             SELECT symbol, string_agg(DISTINCT radar, '+') AS radars
-            FROM fiyat_sikismasi_kayitlari
-            WHERE kutu_bitis >= CURRENT_DATE - INTERVAL '14 days'
+            FROM filtered
             GROUP BY symbol
         )
         SELECT
-            r.symbol, ra.radars, r.efor_rasyosu, r.sok_sayisi,
-            r.sok_hacim_yuzdesi, r.pencere_uzunlugu,
-            r.kutu_baslangic, r.kutu_bitis, r.m_skor AS master_skor
+            r.symbol, ra.radars, r.kanal_yonu,
+            r.efor_rasyosu, r.sok_sayisi, r.sok_hacim_yuzdesi,
+            r.pencere_uzunlugu, r.kutu_baslangic, r.kutu_bitis,
+            r.fiziki_limit, r.master_skor
         FROM RankedSqueezes r
         JOIN RadarAgg ra ON r.symbol = ra.symbol
         WHERE r.rn = 1
-        ORDER BY r.m_skor DESC
-        LIMIT 15
+        ORDER BY r.master_skor DESC
     """, get_conn())
 
 
