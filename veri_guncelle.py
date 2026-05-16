@@ -94,10 +94,10 @@ def grup_isle(conn, grup: list[tuple[int, str]]) -> int:
         en_eski = min(son_tarihler)
         start = pd.Timestamp(en_eski) + pd.Timedelta(days=1)
         start_str = start.strftime("%Y-%m-%d")
-        end_str = pd.Timestamp.today().strftime("%Y-%m-%d")
+        end_str = (pd.Timestamp.today() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     else:
         start_str = "2016-01-01"
-        end_str = pd.Timestamp.today().strftime("%Y-%m-%d")
+        end_str = (pd.Timestamp.today() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
     try:
         raw = yf.download(

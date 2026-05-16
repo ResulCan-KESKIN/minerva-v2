@@ -395,7 +395,7 @@ def _detay_paneli(symbol: str):
                                       min_value=min_date, max_value=max_date,
                                       label_visibility="collapsed")
         col_ok.markdown(
-            f'<div style="color:{DIM_RENK};padding-top:8px;text-align:center">→</div>',
+            f'<div class="mv-arrow" style="color:{DIM_RENK};padding-top:8px;text-align:center">→</div>',
             unsafe_allow_html=True)
         with col_bit:
             tarih_bit = st.date_input("gb_bit", key=f"gb_tarih_bit_{symbol}",

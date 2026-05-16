@@ -152,6 +152,39 @@ div[data-testid="stVerticalBlockBorderWrapper"][style*="overflow"] {
     border: none !important;
     background: transparent !important;
 }
+
+/* ── Mobile ──────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .block-container { padding: 6px 8px 16px 8px !important; }
+
+  /* Tüm kolon grupları dikey yığılsın */
+  div[data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+  }
+  div[data-testid="column"] {
+    min-width: 100% !important;
+    flex: 1 1 100% !important;
+  }
+
+  /* Ok/boşluk ayırıcıları gizle */
+  .mv-arrow { display: none !important; }
+  /* Tarih etiketi gizle (tarih inputları kalır) */
+  .mv-label { display: none !important; }
+
+  /* Header: sağ taraftaki istatistikleri gizle, sol yeterli */
+  .mv-header { flex-wrap: wrap !important; gap: 6px !important; }
+  .mv-header-right { display: none !important; }
+
+  /* Status bar: iki taraf üst üste */
+  .mv-statusbar { flex-direction: column !important; gap: 3px !important; }
+
+  /* Radio sekmeler daha dar */
+  div[data-testid="stRadio"] label { padding: 8px 10px 9px !important; }
+
+  /* Butonların font biraz daha büyük */
+  .stButton > button { font-size: 11px !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -193,7 +226,7 @@ except Exception:
 
 # ── Header ──
 st.markdown(f"""
-<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0 0 0">
+<div class="mv-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0 0 0">
   <div style="display:flex;align-items:center;gap:10px">
     <div style="width:22px;height:22px;border-radius:50%;background:#4d8ef0;
                 display:flex;align-items:center;justify-content:center;
@@ -202,7 +235,7 @@ st.markdown(f"""
     <span style="color:#1e1e30;font-size:13px">·</span>
     <span style="font-size:11px;color:#3a3a55;letter-spacing:0.06em">ANOMALİ + SIKIŞMA</span>
   </div>
-  <div style="display:flex;align-items:center;gap:16px">
+  <div class="mv-header-right" style="display:flex;align-items:center;gap:16px">
     <span style="font-size:10px;color:#3a3a55;letter-spacing:0.06em">
       piyasa <span style="color:#6a6a88">BIST</span>
     </span>
@@ -242,7 +275,7 @@ with col_hisse:
 # ── Status bar ──
 ticker_html = f'ticker — {secilen}' if secilen else 'tıkla → aç'
 st.markdown(f"""
-<div style="font-size:10px;color:#2e2e48;letter-spacing:0.06em;
+<div class="mv-statusbar" style="font-size:10px;color:#2e2e48;letter-spacing:0.06em;
             padding:5px 0 12px 0;border-bottom:1px solid #12121e;
             display:flex;justify-content:space-between">
   <span>

@@ -111,7 +111,7 @@ def goster(hisseler: list):
             st.session_state[bit_key] = max(min_date, min(max_date, st.session_state[bit_key]))
 
         c_lbl.markdown(
-            '<div style="font-size:9px;color:#2e2e48;letter-spacing:0.1em;'
+            '<div class="mv-label" style="font-size:9px;color:#2e2e48;letter-spacing:0.1em;'
             'text-transform:uppercase;padding-top:10px">Tarih</div>',
             unsafe_allow_html=True,
         )
@@ -122,7 +122,7 @@ def goster(hisseler: list):
                 label_visibility="collapsed",
             )
         c_ok.markdown(
-            '<div style="color:#2e2e48;padding-top:8px;text-align:center">→</div>',
+            '<div class="mv-arrow" style="color:#2e2e48;padding-top:8px;text-align:center">→</div>',
             unsafe_allow_html=True,
         )
         with c_bit:
