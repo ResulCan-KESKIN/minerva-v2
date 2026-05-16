@@ -136,6 +136,7 @@ div[data-testid="stInfo"], div[data-testid="stWarning"], div[data-testid="stErro
     font-family: 'IBM Plex Mono', monospace !important; font-size: 11px !important;
 }
 
+
 ::-webkit-scrollbar { width: 3px; height: 3px; }
 ::-webkit-scrollbar-track { background: #0c0c13; }
 ::-webkit-scrollbar-thumb { background: #1e1e30; border-radius: 1px; }

@@ -47,7 +47,7 @@ ZSCORE_MAP = {"Z60": "anomali_z60", "Z120": "anomali_z120",
 
 # Liste
 PAGE_SIZE = 18
-_LW = [1.2, 0.65, 0.55, 0.65, 0.5, 0.75, 0.75]
+_LW = [1.2, 0.65, 0.55, 0.65, 0.5, 0.75, 0.75, 0.3]
 _HDRS = [
     ("Hisse",  None),
     ("Radar",  "radars"),
@@ -56,6 +56,7 @@ _HDRS = [
     ("Şok",    "sok_sayisi"),
     ("F.Lim",  "fiziki_limit"),
     ("M-Skor", "master_skor"),
+    ("✓",      None),
 ]
 
 LISTE_H  = 750
@@ -275,6 +276,17 @@ def _satir(row):
     cols[6].markdown(
         f'<div style="padding:5px 2px;font-size:12px;color:{skor_renk};font-weight:600">'
         f'{ms:.2f}</div>', unsafe_allow_html=True)
+
+    ck_key = f"gb_incelendi_{row['symbol']}"
+    incelendi = st.session_state.get(ck_key, False)
+    if cols[7].button(
+        "✓" if incelendi else "·",
+        key=f"ck_btn_{row['symbol']}",
+        use_container_width=True,
+        type="primary" if incelendi else "secondary",
+    ):
+        st.session_state[ck_key] = not incelendi
+        st.rerun()
 
 
 def _liste_paneli(df: pd.DataFrame):
