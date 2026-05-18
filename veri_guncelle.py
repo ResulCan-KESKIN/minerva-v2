@@ -1,8 +1,6 @@
-# veri_guncelle.py — Yahoo Finance → stock_prices (günlük güncelleme)
-# Trigger otomatik volume_analysis'i dolduracak
+# veri_guncelle.py — Yahoo Finance → stock_prices (günlük güncelleme + 10 yıl backfill)
 import psycopg2
 import pandas as pd
-import numpy as np
 import yfinance as yf
 import time
 import os
@@ -21,6 +19,7 @@ DB_CONFIG = {
 }
 
 GRUP_BOYUTU = 50
+TARGET_START = (pd.Timestamp.today() - pd.DateOffset(years=10)).strftime("%Y-%m-%d")
 
 
 def get_conn():
@@ -35,21 +34,21 @@ def hisseleri_cek(conn) -> list[tuple[int, str]]:
     return hisseler
 
 
-def son_tarih_cek(conn, stock_id: int):
-    """Bu hisse için stock_prices'taki son veri tarihini bul."""
+def tarih_aralik_cek(conn, stock_id: int) -> tuple:
+    """Hisse için (en_eski, en_yeni) tarih ikilisi; veri yoksa (None, None)."""
     cur = conn.cursor()
     cur.execute("""
-        SELECT MAX(price_date::date) FROM stock_prices WHERE stock_id = %s
+        SELECT MIN(price_date::date), MAX(price_date::date)
+        FROM stock_prices WHERE stock_id = %s
     """, (stock_id,))
-    sonuc = cur.fetchone()[0]
+    row = cur.fetchone()
     cur.close()
-    return sonuc
+    return (row[0], row[1]) if row else (None, None)
 
 
 def db_yaz(conn, stock_id: int, df: pd.DataFrame) -> int:
     cur = conn.cursor()
     eklenen = 0
-
     for _, satir in df.iterrows():
         try:
             cur.execute("""
@@ -72,32 +71,15 @@ def db_yaz(conn, stock_id: int, df: pd.DataFrame) -> int:
         except Exception as e:
             print(f"  Satır hatası: {e}")
             continue
-
     conn.commit()
     cur.close()
     return eklenen
 
 
-def grup_isle(conn, grup: list[tuple[int, str]]) -> int:
-    """50 hisseyi toplu çek, yeni günleri yaz."""
+def _fetch_ve_yaz(conn, grup: list[tuple[int, str]], start_str: str, end_str: str) -> int:
+    """Verilen tarih aralığını yfinance'den çek, DB'ye yaz."""
     tickerlar = [f"{s}.IS" for _, s in grup]
     id_map = {f"{s}.IS": sid for sid, s in grup}
-
-    # En eski son tarih — o günden itibaren çek
-    son_tarihler = []
-    for sid, _ in grup:
-        t = son_tarih_cek(conn, sid)
-        if t:
-            son_tarihler.append(t)
-
-    if son_tarihler:
-        en_eski = min(son_tarihler)
-        start = pd.Timestamp(en_eski) + pd.Timedelta(days=1)
-        start_str = start.strftime("%Y-%m-%d")
-        end_str = (pd.Timestamp.today() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-    else:
-        start_str = "2016-01-01"
-        end_str = (pd.Timestamp.today() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
     try:
         raw = yf.download(
@@ -107,10 +89,10 @@ def grup_isle(conn, grup: list[tuple[int, str]]) -> int:
             auto_adjust=True,
             group_by="ticker",
             progress=False,
-            threads=True
+            threads=True,
         )
     except Exception as e:
-        print(f"  Grup çekme hatası: {e}")
+        print(f"  Çekme hatası ({start_str} → {end_str}): {e}")
         return 0
 
     if raw.empty:
@@ -137,7 +119,7 @@ def grup_isle(conn, grup: list[tuple[int, str]]) -> int:
 
             eklenen = db_yaz(conn, stock_id, df)
             if eklenen > 0:
-                print(f"  {symbol}: {eklenen} yeni satır eklendi.")
+                print(f"  {symbol}: +{eklenen} satır")
             toplam += eklenen
 
         except Exception as e:
@@ -146,8 +128,50 @@ def grup_isle(conn, grup: list[tuple[int, str]]) -> int:
     return toplam
 
 
+def grup_isle(conn, grup: list[tuple[int, str]]) -> int:
+    """
+    Her grup için iki aralık hesapla:
+      1. Backfill  : TARGET_START → en eski mevcut tarih  (geçmiş boşluk)
+      2. İleri fill: en yeni tarih+1 → bugün              (yeni günler)
+    Veri hiç yoksa: TARGET_START → bugün (tek seferde).
+    """
+    today_str = (pd.Timestamp.today() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    target_ts = pd.Timestamp(TARGET_START)
+
+    # Gruptaki her hisse için (en_eski, en_yeni) çek
+    araliklar = [tarih_aralik_cek(conn, sid) for sid, _ in grup]
+    mevcut    = [(e, y) for e, y in araliklar if e is not None and y is not None]
+
+    toplam = 0
+
+    if not mevcut:
+        # Hiç veri yok — tam 10 yıl çek
+        print(f"  Backfill (yeni): {TARGET_START} → bugün")
+        toplam += _fetch_ve_yaz(conn, grup, TARGET_START, today_str)
+        return toplam
+
+    en_eski_db = min(pd.Timestamp(e) for e, _ in mevcut)
+    en_yeni_db = max(pd.Timestamp(y) for _, y in mevcut)
+
+    # 1. Backfill: DB'deki en eski tarih TARGET_START'tan sonraysa
+    if en_eski_db > target_ts:
+        bf_end = en_eski_db.strftime("%Y-%m-%d")
+        print(f"  Backfill: {TARGET_START} → {bf_end}")
+        toplam += _fetch_ve_yaz(conn, grup, TARGET_START, bf_end)
+        time.sleep(1)
+
+    # 2. İleri fill: son günden bugüne
+    ileri_start = (en_yeni_db + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    if ileri_start < today_str:
+        print(f"  İleri fill: {ileri_start} → bugün")
+        toplam += _fetch_ve_yaz(conn, grup, ileri_start, today_str)
+
+    return toplam
+
+
 if __name__ == "__main__":
     print("Minerva Veri Güncelleme Başladı...")
+    print(f"Hedef başlangıç: {TARGET_START}")
     print("=" * 60)
 
     conn = get_conn()
@@ -157,7 +181,7 @@ if __name__ == "__main__":
     toplam = 0
     for i in range(0, len(hisseler), GRUP_BOYUTU):
         grup = hisseler[i:i + GRUP_BOYUTU]
-        print(f"Grup {i//GRUP_BOYUTU + 1}: {grup[0][1]} → {grup[-1][1]}")
+        print(f"Grup {i // GRUP_BOYUTU + 1}: {grup[0][1]} → {grup[-1][1]}")
         toplam += grup_isle(conn, grup)
         time.sleep(2)
 
