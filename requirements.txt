@@ -10,3 +10,4 @@ streamlit-lightweight-charts
 python-dotenv
 requests
 beautifulsoup4
+openpyxl

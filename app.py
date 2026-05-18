@@ -1,6 +1,9 @@
+import io
 import streamlit as st
 import pandas as pd
+from datetime import date
 from db import get_conn
+import data_access
 from pages import hisse_detay, anomali_backtest, master_analiz
 
 st.set_page_config(
@@ -74,6 +77,18 @@ div[data-testid="stRadio"] label > p { margin: 0 !important; }
     color: #4d8ef0 !important;
 }
 .stButton > button[kind="primary"]:hover { background: #152438 !important; }
+
+[data-testid="stDownloadButton"] > button {
+    background: transparent !important; border: 1px solid #2a4a2a !important;
+    color: #4a8a4a !important; font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 10px !important; letter-spacing: 0.1em !important;
+    text-transform: uppercase !important; border-radius: 2px !important;
+    padding: 4px 12px !important; width: 100% !important;
+}
+[data-testid="stDownloadButton"] > button:hover {
+    border-color: #22c55e !important; color: #22c55e !important;
+    background: #0a1a0a !important;
+}
 
 div[data-baseweb="select"] > div {
     background: #0c0c13 !important; border: 1px solid #1e1e30 !important;
@@ -191,6 +206,129 @@ div[data-testid="stVerticalBlockBorderWrapper"][style*="overflow"] {
 
 
 @st.cache_data(ttl=300)
+def _excel_tum_sikismalar() -> bytes:
+    from openpyxl.styles import PatternFill, Font, Alignment
+    from openpyxl.utils import get_column_letter
+
+    conn = get_conn()
+    df = data_access.sikisma_kayitlari_cek(conn)
+
+    col_sirasi = [
+        ("symbol",           "Hisse"),
+        ("radar",            "Radar"),
+        ("kutu_baslangic",   "Kutu Başlangıç"),
+        ("kutu_bitis",       "Kutu Bitiş"),
+        ("pencere_uzunlugu", "Pencere (Gün)"),
+        ("kanal_yonu",       "Kanal Yönü"),
+        ("cekirdek_zirve",   "Çekirdek Zirve"),
+        ("cekirdek_dip",     "Çekirdek Dip"),
+        ("fiziki_limit",     "Fiziki Limit"),
+        ("efor_rasyosu",     "Efor Rasyosu"),
+        ("sok_sayisi",       "Şok Sayısı"),
+        ("sok_hacim_yuzdesi","Şok Hacim %"),
+        ("m_norm",           "M-Norm"),
+        ("trend_m",          "Trend Eğimi"),
+        ("trend_c",          "Trend Sabiti"),
+        ("kanal_ust_offset", "Kanal Üst Offset"),
+        ("kanal_alt_offset", "Kanal Alt Offset"),
+        ("olusturma_zaman",  "Oluşturma Zamanı"),
+    ]
+    mevcut  = [c for c, _ in col_sirasi if c in df.columns]
+    isimler = {c: n for c, n in col_sirasi if c in df.columns}
+    df_detay = (
+        df[mevcut]
+        .rename(columns=isimler)
+        .sort_values(["Hisse", "Kutu Bitiş"], ascending=[True, False])
+        .reset_index(drop=True)
+    )
+
+    # ── Özet sheet ──
+    if not df.empty:
+        ozet = (
+            df.groupby("symbol")
+            .agg(
+                Radar1=("radar", lambda x: (x == "radar1").sum()),
+                Radar2=("radar", lambda x: (x == "radar2").sum()),
+                Toplam=("radar", "count"),
+                Son_Sikisma=("kutu_bitis", "max"),
+                En_Iyi_Efor=("efor_rasyosu", "max"),
+                En_Cok_Sok=("sok_sayisi", "max"),
+            )
+            .reset_index()
+            .rename(columns={
+                "symbol":      "Hisse",
+                "Radar1":      "Radar1 Sayısı",
+                "Radar2":      "Radar2 Sayısı",
+                "Toplam":      "Toplam Sıkışma",
+                "Son_Sikisma": "Son Sıkışma",
+                "En_Iyi_Efor": "En İyi Efor",
+                "En_Cok_Sok":  "Max Şok",
+            })
+            .sort_values("En İyi Efor", ascending=False)
+            .reset_index(drop=True)
+        )
+    else:
+        ozet = pd.DataFrame()
+
+    # ── Stil yardımcıları ──
+    def stil_header(ws, renk_hex="0D1A2E", yazi_hex="4D8EF0"):
+        dolgu = PatternFill(start_color=renk_hex, end_color=renk_hex, fill_type="solid")
+        font  = Font(name="Calibri", bold=True, color=yazi_hex, size=10)
+        for cell in ws[1]:
+            cell.fill  = dolgu
+            cell.font  = font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.freeze_panes = "A2"
+        ws.row_dimensions[1].height = 22
+
+    def otomatik_genislik(ws):
+        for col in ws.columns:
+            max_len = max((len(str(cell.value or "")) for cell in col), default=8)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 3, 36)
+
+    r1_dolgu  = PatternFill(start_color="080F1A", end_color="080F1A", fill_type="solid")
+    r2_dolgu  = PatternFill(start_color="160F04", end_color="160F04", fill_type="solid")
+    def_dolgu = PatternFill(start_color="0C0C13", end_color="0C0C13", fill_type="solid")
+    veri_font = Font(name="Calibri", color="C0C0D0", size=9)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        # Detay sheet
+        df_detay.to_excel(writer, sheet_name="Sıkışma Kayıtları", index=False)
+        ws_d = writer.sheets["Sıkışma Kayıtları"]
+        stil_header(ws_d)
+
+        radar_idx = next(
+            (i for i, cell in enumerate(ws_d[1], 1) if cell.value == "Radar"), None
+        )
+        for row in ws_d.iter_rows(min_row=2):
+            rv    = row[radar_idx - 1].value if radar_idx else None
+            dolgu = r1_dolgu if rv == "radar1" else (r2_dolgu if rv == "radar2" else def_dolgu)
+            for cell in row:
+                cell.fill      = dolgu
+                cell.font      = veri_font
+                cell.alignment = Alignment(vertical="center")
+                ws_d.row_dimensions[cell.row].height = 15
+        otomatik_genislik(ws_d)
+
+        # Özet sheet
+        if not ozet.empty:
+            ozet.to_excel(writer, sheet_name="Hisse Özeti", index=False)
+            ws_o = writer.sheets["Hisse Özeti"]
+            stil_header(ws_o, renk_hex="0A1A0A", yazi_hex="22C55E")
+            for row in ws_o.iter_rows(min_row=2):
+                for cell in row:
+                    cell.fill      = def_dolgu
+                    cell.font      = veri_font
+                    cell.alignment = Alignment(vertical="center")
+                    ws_o.row_dimensions[cell.row].height = 15
+            otomatik_genislik(ws_o)
+
+    buf.seek(0)
+    return buf.read()
+
+
+@st.cache_data(ttl=300)
 def _anomali_stats():
     conn = get_conn()
     return pd.read_sql("""
@@ -250,8 +388,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Nav + Hisse seçici ──
-col_nav, col_hisse = st.columns([9, 2])
+# ── Nav + Hisse seçici + Export ──
+col_nav, col_hisse, col_export = st.columns([7, 2, 1.4])
 
 with col_nav:
     sayfa = st.radio(
@@ -272,6 +410,21 @@ with col_hisse:
             label_visibility="collapsed",
             key="nav_hisse",
         )
+
+with col_export:
+    try:
+        excel_bytes = _excel_tum_sikismalar()
+        dosya_adi = f"minerva_sikismalar_{date.today().strftime('%Y%m%d')}.xlsx"
+        st.download_button(
+            label="↓ xlsx",
+            data=excel_bytes,
+            file_name=dosya_adi,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            help="Tüm hisselerin geçmiş sıkışma verilerini Excel olarak indir",
+        )
+    except Exception as e:
+        st.button("↓ xlsx", disabled=True, use_container_width=True, help=str(e))
 
 # ── Status bar ──
 ticker_html = f'ticker — {secilen}' if secilen else 'tıkla → aç'
