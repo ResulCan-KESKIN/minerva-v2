@@ -127,7 +127,8 @@ def liderlik_liste(gun_siniri: int = 90) -> pd.DataFrame:
             r.symbol, ra.radars, r.kanal_yonu,
             r.efor_rasyosu, r.sok_sayisi, r.sok_hacim_yuzdesi,
             r.pencere_uzunlugu, r.kutu_baslangic, r.kutu_bitis,
-            r.fiziki_limit, r.master_skor
+            r.fiziki_limit, r.master_skor,
+            r.milat_tipi, r.kopus_yonu, r.fiyat_avwap_sapma
         FROM RankedSqueezes r
         JOIN RadarAgg ra ON r.symbol = ra.symbol
         WHERE r.rn = 1

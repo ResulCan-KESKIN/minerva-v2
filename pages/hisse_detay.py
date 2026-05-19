@@ -1,10 +1,58 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import timedelta
 import cache
 from components.grafik_kutu import grafik_kutu_goster
 from components.anomali_tablo import tip_badge, durum_badge
 from components.faz_kart import faz_metrikler_goster
+
+KOPUS_ATR_CARPANI = 2.0   # grafik bandı için (radar2.py ile senkron)
+
+
+def _avwap_ve_atr_hesapla(
+    df_fiyat: pd.DataFrame,
+    milat_tarihi: pd.Timestamp,
+    kopus_tarihi: pd.Timestamp,
+) -> tuple[list[dict], list[dict]]:
+    """
+    AVWAP serisi ve ATR×2 band serisi üretir (grafik_kutu için).
+    Döner: (avwap_serie, atr_serie) — her biri [{time, value}] listesi.
+    """
+    if "price_date" in df_fiyat.columns:
+        df = df_fiyat.set_index("price_date").sort_index()
+    else:
+        df = df_fiyat.sort_index()
+    df.index = pd.to_datetime(df.index)
+
+    mask     = (df.index >= milat_tarihi) & (df.index <= kopus_tarihi)
+    df_emil  = df.loc[mask].copy()
+    if df_emil.empty:
+        return [], []
+
+    # AVWAP
+    y_tipik  = (df_emil["yuksek"] + df_emil["dusuk"] + df_emil["kapanis"]) / 3
+    vol      = df_emil["hacim"].clip(lower=0)
+    kum_tpv  = (y_tipik * vol).cumsum()
+    kum_v    = vol.cumsum().replace(0, np.nan)
+    avwap    = kum_tpv / kum_v
+
+    # ATR (son 60 günlük veriden hesapla, kopuş bandı için sabit değer kullan)
+    df_atr   = df.loc[df.index <= kopus_tarihi].tail(60)
+    h, l, c  = df_atr["yuksek"], df_atr["dusuk"], df_atr["kapanis"].shift(1)
+    tr       = pd.concat([(h - l), (h - c).abs(), (l - c).abs()], axis=1).max(axis=1)
+    atr_val  = float(tr.rolling(60, min_periods=10).mean().iloc[-1])
+    band_val = KOPUS_ATR_CARPANI * atr_val
+
+    avwap_serie = [
+        {"time": t.strftime("%Y-%m-%d"), "value": round(float(v), 4)}
+        for t, v in avwap.items() if pd.notna(v)
+    ]
+    atr_serie = [
+        {"time": item["time"], "value": round(band_val, 4)}
+        for item in avwap_serie
+    ]
+    return avwap_serie, atr_serie
 
 PERIODS = {"1A": 30, "3A": 90, "6A": 180, "1Y": 365, "TÜM": None}
 
@@ -167,16 +215,31 @@ def goster(hisseler: list):
                 bas_k   = pd.to_datetime(row["kutu_baslangic"])
                 if bitis_k < cutoff or bas_k > bitis_ts:
                     continue
+
+                # Radar 2 v2: AVWAP serisi hesapla
+                avwap_serie, atr_serie = [], []
+                if row.get("radar") == "radar2" and pd.notna(row.get("milat_tipi")):
+                    avwap_serie, atr_serie = _avwap_ve_atr_hesapla(
+                        df_fiyat,
+                        pd.Timestamp(row["kutu_baslangic"]),
+                        pd.Timestamp(row["kutu_bitis"]),
+                    )
+
                 kutular.append({
-                    "baslangic": row["kutu_baslangic"],
-                    "bitis":     row["kutu_bitis"],
-                    "radar":     row["radar"],
-                    "zirve":     row.get("cekirdek_zirve") or 0,
-                    "dip":       row.get("cekirdek_dip")   or 0,
+                    "baslangic":        row["kutu_baslangic"],
+                    "bitis":            row["kutu_bitis"],
+                    "radar":            row["radar"],
+                    "zirve":            row.get("cekirdek_zirve") or 0,
+                    "dip":              row.get("cekirdek_dip")   or 0,
                     "trend_m":          row.get("trend_m"),
                     "trend_c":          row.get("trend_c"),
                     "kanal_ust_offset": row.get("kanal_ust_offset"),
                     "kanal_alt_offset": row.get("kanal_alt_offset"),
+                    # Radar 2 v2
+                    "milat_tipi":       row.get("milat_tipi"),
+                    "kopus_yonu":       row.get("kopus_yonu"),
+                    "avwap_serie":      avwap_serie or None,
+                    "atr_serie":        atr_serie   or None,
                 })
 
             anoms_filtered = anomaliler
@@ -249,6 +312,9 @@ def goster(hisseler: list):
                 efor_rasyosu     =float(son["efor_rasyosu"])      if pd.notna(son.get("efor_rasyosu"))        else None,
                 sok_sayisi       =int(son["sok_sayisi"])          if pd.notna(son.get("sok_sayisi"))          else None,
                 sok_hacim_yuzdesi=float(son["sok_hacim_yuzdesi"]) if pd.notna(son.get("sok_hacim_yuzdesi"))  else None,
+                radar            =str(son.get("radar", "radar1")),
+                avwap_sapma      =float(son["fiyat_avwap_sapma"]) if pd.notna(son.get("fiyat_avwap_sapma")) else None,
+                kopus_yonu       =son.get("kopus_yonu"),
             )
 
     with col_side:
@@ -323,13 +389,20 @@ def goster(hisseler: list):
                 ascending=False,
             )
             st.markdown(
-                '<div style="display:grid;grid-template-columns:56px 100px 42px 62px 48px;'
+                '<div style="display:grid;grid-template-columns:56px 90px 38px 58px 44px 52px;'
                 'gap:0;padding:5px 10px;border-bottom:1px solid #1a1a24;'
                 'font-size:9px;color:#2e2e48;letter-spacing:0.1em;text-transform:uppercase">'
                 '<span>Radar</span><span>Bitiş</span><span>Gün</span>'
-                '<span>Efor</span><span>Şok</span></div>',
+                '<span>Efor</span><span>Şok</span><span>Durum</span></div>',
                 unsafe_allow_html=True,
             )
+            _MILAT_KISA = {
+                "savas_mumu": "⚔", "kara_gun": "↓",
+                "gap_down": "▽",   "doji": "◇",
+            }
+            _KOPUS_KISA = {
+                "yukari": "▲", "asagi": "▼", "zaman_asimi": "⏱",
+            }
             with st.container(height=SIKIS_SCROLL_H, border=False):
                 for _, row in df_kayitlar.iterrows():
                     radar_renk = "#4d8ef0" if row["radar"] == "radar1" else "#d4820a"
@@ -337,14 +410,28 @@ def goster(hisseler: list):
                     sok_str    = str(int(row["sok_sayisi"]))    if pd.notna(row.get("sok_sayisi"))    else "—"
                     pencere    = str(int(row["pencere_uzunlugu"])) if pd.notna(row.get("pencere_uzunlugu")) else "—"
                     bitis      = str(row["kutu_bitis"])[:10]
+                    # Radar2 v2 durum sütunu
+                    milat_t = row.get("milat_tipi")
+                    kopus_y = row.get("kopus_yonu")
+                    if milat_t:
+                        sembol = _MILAT_KISA.get(milat_t, "●")
+                        kopus  = _KOPUS_KISA.get(kopus_y, "·") if kopus_y else "·"
+                        durum_html = (
+                            f'<span style="font-size:10px;color:#d4820a">'
+                            f'{sembol} {kopus}</span>'
+                        )
+                    else:
+                        durum_html = '<span style="font-size:10px;color:#2e2e48">—</span>'
+
                     st.markdown(
-                        f'<div style="display:grid;grid-template-columns:56px 100px 42px 62px 48px;'
+                        f'<div style="display:grid;grid-template-columns:56px 90px 38px 58px 44px 52px;'
                         f'gap:0;padding:7px 10px;border-bottom:1px solid #0f0f18;align-items:center">'
                         f'<span style="font-size:10px;color:{radar_renk}">{row["radar"].upper()}</span>'
                         f'<span style="font-size:10px;color:#8888a8">{bitis}</span>'
                         f'<span style="font-size:10px;color:#4a4a68">{pencere}g</span>'
                         f'<span style="font-size:10px;color:#e0e0f0">{efor_str}</span>'
                         f'<span style="font-size:10px;color:#d4820a">{sok_str}</span>'
+                        f'{durum_html}'
                         f'</div>',
                         unsafe_allow_html=True,
                     )

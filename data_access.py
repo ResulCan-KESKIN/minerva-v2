@@ -66,7 +66,9 @@ def sikisma_kayitlari_cek(conn, symbol: str | None = None) -> pd.DataFrame:
                sok_sayisi, sok_hacim_yuzdesi, olusturma_zaman,
                m_norm, kanal_yonu,
                trend_m, trend_c,
-               kanal_ust_offset, kanal_alt_offset
+               kanal_ust_offset, kanal_alt_offset,
+               milat_tipi, guncel_avwap, fiyat_avwap_sapma,
+               kopus_yonu, kum_tp_vol, kum_vol
         FROM fiyat_sikismasi_kayitlari
         {where}
         ORDER BY kutu_bitis DESC, efor_rasyosu DESC NULLS LAST

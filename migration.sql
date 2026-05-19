@@ -32,3 +32,20 @@ ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS trend_m          
 ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS trend_c          NUMERIC;
 ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS kanal_ust_offset NUMERIC;
 ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS kanal_alt_offset NUMERIC;
+
+-- Radar2 v2 — AVWAP bazlı teslimiyet & emilim
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS milat_tipi        TEXT;
+    -- 'savas_mumu' | 'kara_gun' | 'gap_down' | 'doji'
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS guncel_avwap      NUMERIC;
+    -- AVWAP'ın son hesaplanan değeri
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS fiyat_avwap_sapma NUMERIC;
+    -- (Close - AVWAP) / AVWAP × 100
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS kopus_yonu        TEXT;
+    -- 'yukari' | 'asagi' | 'zaman_asimi' | NULL (açık emilim)
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS kum_tp_vol        NUMERIC;
+    -- Kümülatif (Y_tipik × Volume) — incremental güncelleme için
+ALTER TABLE fiyat_sikismasi_kayitlari ADD COLUMN IF NOT EXISTS kum_vol           BIGINT;
+    -- Kümülatif Volume — incremental güncelleme için
+
+CREATE INDEX IF NOT EXISTS idx_fsk_milat_tipi ON fiyat_sikismasi_kayitlari (milat_tipi)
+    WHERE milat_tipi IS NOT NULL;

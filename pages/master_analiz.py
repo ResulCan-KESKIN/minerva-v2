@@ -1,8 +1,36 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import timedelta
 import cache
 from streamlit_lightweight_charts import renderLightweightCharts
+
+KOPUS_ATR_CARPANI = 2.0
+
+
+def _avwap_hesapla(df_fiyat: pd.DataFrame, milat_tarihi, kopus_tarihi):
+    """Milat → kopuş arası AVWAP ve ATR band serisi. [{time,value}] listesi döner."""
+    if "price_date" in df_fiyat.columns:
+        df = df_fiyat.set_index("price_date").sort_index()
+    else:
+        df = df_fiyat.sort_index()
+    df.index = pd.to_datetime(df.index)
+    mask    = (df.index >= pd.Timestamp(milat_tarihi)) & (df.index <= pd.Timestamp(kopus_tarihi))
+    df_e    = df.loc[mask].copy()
+    if df_e.empty:
+        return [], []
+    y_tipik = (df_e["yuksek"] + df_e["dusuk"] + df_e["kapanis"]) / 3
+    vol     = df_e["hacim"].clip(lower=0)
+    avwap   = (y_tipik * vol).cumsum() / vol.cumsum().replace(0, np.nan)
+    df_atr  = df.loc[df.index <= pd.Timestamp(kopus_tarihi)].tail(60)
+    h, l, c = df_atr["yuksek"], df_atr["dusuk"], df_atr["kapanis"].shift(1)
+    tr      = pd.concat([(h - l), (h - c).abs(), (l - c).abs()], axis=1).max(axis=1)
+    atr_val = float(tr.rolling(60, min_periods=10).mean().iloc[-1])
+    band    = KOPUS_ATR_CARPANI * atr_val
+    avwap_s = [{"time": t.strftime("%Y-%m-%d"), "value": round(float(v), 4)}
+               for t, v in avwap.items() if pd.notna(v)]
+    atr_s   = [{"time": x["time"], "value": round(band, 4)} for x in avwap_s]
+    return avwap_s, atr_s
 
 # ─── Sabitler ─────────────────────────────────────────────────────────────────
 
@@ -146,6 +174,27 @@ def master_grafik_goster(df, kutular, anomaliler, key="master_grafik",
             renk   = RADAR_RENK.get(k["radar"], R1_RENK)
             lw, ls = 1, 2
 
+        # Radar 2 v2 — AVWAP çizgisi
+        if k.get("avwap_serie"):
+            av_renk = renk if (has_selected and not is_s) else "#d4820a"
+            extra_series.append({"type": "Line", "data": k["avwap_serie"],
+                "options": {"color": av_renk, "lineWidth": 2 if (not has_selected or is_s) else 1,
+                            "lineStyle": 0, "priceScaleId": "right",
+                            "lastValueVisible": False, "priceLineVisible": False}})
+            if k.get("atr_serie") and len(k["atr_serie"]) == len(k["avwap_serie"]):
+                brenk = renk if (has_selected and not is_s) else "#d4820a44"
+                for band in (
+                    [{"time": a["time"], "value": a["value"] + b["value"]}
+                     for a, b in zip(k["avwap_serie"], k["atr_serie"])],
+                    [{"time": a["time"], "value": a["value"] - b["value"]}
+                     for a, b in zip(k["avwap_serie"], k["atr_serie"])],
+                ):
+                    extra_series.append({"type": "Line", "data": band,
+                        "options": {"color": brenk, "lineWidth": 1, "lineStyle": 2,
+                                    "priceScaleId": "right",
+                                    "lastValueVisible": False, "priceLineVisible": False}})
+            continue
+
         trend_m = k.get("trend_m")
         trend_c = k.get("trend_c")
         ust_off = k.get("kanal_ust_offset")
@@ -255,8 +304,17 @@ def _satir(row):
             st.session_state["gb_secilen"] = row["symbol"]
             st.rerun()
 
+    milat_t  = row.get("milat_tipi")
+    kopus_y  = row.get("kopus_yonu")
+    _M = {"savas_mumu": "⚔", "kara_gun": "↓", "gap_down": "▽", "doji": "◇"}
+    _K = {"yukari": "▲", "asagi": "▼", "zaman_asimi": "⏱"}
+    radar_txt = radars
+    if milat_t:
+        radar_txt += f" {_M.get(milat_t,'●')}"
+    if kopus_y:
+        radar_txt += f"{_K.get(kopus_y,'')}"
     cols[1].markdown(
-        f'<div style="padding:5px 2px;font-size:10px;color:{r_renk}">{radars}</div>',
+        f'<div style="padding:5px 2px;font-size:10px;color:{r_renk}">{radar_txt}</div>',
         unsafe_allow_html=True)
     cols[2].markdown(
         f'<div style="padding:5px 2px;font-size:11px;color:{HISSE_RENK}">'
@@ -422,11 +480,17 @@ def _detay_paneli(symbol: str):
             (df_fiyat["price_date"] <= bitis_ts)
         ].copy()
 
-        kutular_ham = [
-            row.to_dict() for _, row in df_sikisma.iterrows()
-            if not (pd.to_datetime(row["kutu_bitis"]) < cutoff or
-                    pd.to_datetime(row["kutu_baslangic"]) > bitis_ts)
-        ]
+        kutular_ham = []
+        for _, row in df_sikisma.iterrows():
+            if (pd.to_datetime(row["kutu_bitis"]) < cutoff or
+                    pd.to_datetime(row["kutu_baslangic"]) > bitis_ts):
+                continue
+            k = row.to_dict()
+            if k.get("radar") == "radar2" and pd.notna(k.get("milat_tipi")):
+                k["avwap_serie"], k["atr_serie"] = _avwap_hesapla(
+                    df_fiyat, k["kutu_baslangic"], k["kutu_bitis"]
+                )
+            kutular_ham.append(k)
 
         df_anomali_f = df_anomali
         if not df_anomali.empty:
